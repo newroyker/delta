@@ -962,6 +962,36 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase {
       }
     }
   }
+
+  test("startingVersion") {
+    withTempDir { inputDir =>
+      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+      (0 until 5).foreach { i =>
+        val v = Seq(i.toString).toDF
+        v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+      }
+
+      val q = spark.readStream
+        .format("delta")
+        .option("startingVersion", "5")
+        .load(inputDir.getCanonicalPath)
+        .writeStream
+        .format("memory")
+        .queryName("startingVersionTest")
+        .start()
+      try {
+        q.processAllAvailable()
+        val progress = q.recentProgress.filter(_.numInputRows != 0)
+        assert(progress.length === 1)
+        progress.foreach { p =>
+          assert(p.numInputRows === 5)
+        }
+        checkAnswer(sql("SELECT * from startingVersionTest"), (0 until 5).map(_.toString).toDF)
+      } finally {
+        q.stop()
+      }
+    }
+  }
 }
 
 /**
